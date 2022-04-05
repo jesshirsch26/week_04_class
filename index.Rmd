@@ -2,10 +2,249 @@
 title: "Board Game Analysis"
 author: "Jessica Hirsch"
 date: '2022-04-04'
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    theme: journal
+    code_folding: hide
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(here)
+library(janitor)
+```
+
+```{r}
+boardgames <- 
+  read_csv2(here::here("Data", "bgg_dataset.csv"))
+```
+
+```{r}
+source(here::here("Scripts", "01_Clean_Boardgames.R"))
+```
+
+
+```{r}
+boardgames_clean <- clean_names(boardgames_clean)
+```
+
+How many board games were published each year?
+
+```{r}
+boardgames_clean %>% 
+  count(year_published, sort = T) %>% 
+  ggplot(aes(x = year_published,
+             y = n)) +
+  geom_line()
+```
+
+What does 'rating_average' look like?
+
+```{r}
+boardgames_clean %>% 
+  ggplot(aes(x = rating_average)) +
+  geom_histogram()
+```
+
+```{r}
+boardgames_clean %>% 
+  filter(year_published <= 0) %>% 
+  arrange(year_published)
+```
+
+```{r}
+boardgames_clean <- 
+  boardgames_clean %>% 
+  mutate(year_published = if_else(condition = year_published == 0,
+                                  true = NA_real_,
+                                  false = year_published))
+```
+
+```{r}
+boardgames_clean %>% 
+  mutate(player_grater_flag = if_else(max_players >= min_players,
+                                      T,
+                                      F)) %>% 
+  filter(! player_grater_flag) %>% 
+  select(id, name, min_players, max_players)
+```
+
+```{r}
+boardgames_clean <- 
+boardgames_clean %>% 
+  mutate(max_players = if_else(max_players == 0,
+                               999,
+                               max_players))
+```
+
+```{r}
+boardgames_clean %>% 
+  ggplot(aes(x = complexity_average)) +
+  geom_histogram()
+
+boardgames_clean %>% 
+  mutate(play_time = log10(play_time)) %>% 
+  ggplot(aes(x = play_time)) +
+  geom_histogram()
+
+boardgames_clean %>% 
+  mutate(owned_users = log10(owned_users)) %>% 
+  ggplot(aes(x = owned_users)) +
+  geom_histogram()
+```
+
+
+```{r}
+boardgames_owned_users <- 
+  boardgames_clean %>% 
+  mutate(owned_users_log10 = log10(owned_users)) %>% 
+  select(id, name, owned_users, owned_users_log10)
+
+boardgames_owned_users%>% 
+  ggplot(aes(x = owned_users_log10)) +
+  geom_histogram()
+```
+
+```{r}
+summary(boardgames_clean)
+```
+# Imputation
+
+```{r}
+boardgames_clean <-   
+boardgames_clean %>% 
+  mutate(play_time = if_else(is.na(play_time),
+                             median(play_time, na.rm = T),
+                             play_time),
+         owned_users = if_else(is.na(owned_users),
+                               median(owned_users, na.rm = T),
+                               owned_users))
+```
+
+
+```{r}
+#boardgames_clean %>% 
+#  mutate(owned_users = replace_na(owned_users, median(owned_users, na.rm = T)))
+
+```
+
+# Multiple Conidtions
+
+Any games with a play_time less than 30 minutes should be considered “fast games”
+Any games with a play_time between 30 minutes and 120 minutes should be considered “average games”
+Any games with a play_time greater than 120 minutes should be considered “long games”
+
+```{r}
+boardgames_clean %>% 
+  ggplot(aes(x = play_time)) +
+  geom_histogram() +
+  scale_x_continuous(trans = "log10")
+```
+
+```{r}
+boardgames_clean <- 
+boardgames_clean %>% 
+  mutate(play_time_bins = case_when(
+    play_time <= 30 ~ "fast game",
+    play_time > 30 & play_time <= 120 ~ "average game",
+    play_time > 120 ~ "long game"
+  ))
+```
+
+* Any games with `max_players` of 3 or less should be considered “small games”
+* Any games with `max_players` between 3 and 5 should be considered “medium games”
+* Any games with `max_players` between 5 and 10 should be considered “large games”
+* Any games with `max_players` greater than 10 should be considered “huge games”
+
+```{r}
+boardgames_clean <- 
+boardgames_clean %>% 
+  mutate(max_players_bins = case_when(
+    max_players <= 3 ~ "small games",
+    max_players > 3 & max_players <= 5 ~ "medium games",
+    max_players > 5 & max_players <= 10 ~ "large games",
+    max_players >10 ~ "huge games"
+  ))
+```
+
+```{r}
+boardgames_clean %>% 
+  mutate(mechanic_cooperative_game = if_else(is.na(mechanic_cooperative_game), F, T)) %>% 
+           count(mechanic_cooperative_game)
+```
+
+# Across
+
+```{r}
+boardgames_clean <- 
+boardgames_clean %>% 
+  mutate(across(starts_with("mechanic"), ~if_else(is.na(.), F, T)))
+```
+
+```{r}
+boardgames_clean <- 
+boardgames_clean %>% 
+  mutate(across(starts_with("domain"), ~if_else(is.na(.), F, T)))
+```
+
+## Practicing with logs
+
+```{r}
+boardgames_clean <- 
+boardgames_clean %>% 
+  mutate(across(c(play_time, owned_users), ~log10(.), .names = "{.col}_log"))
+```
+
+# `across` in `summarise`
+
+```{r}
+boardgames_clean %>% 
+  summarise(across(c(where(is.double), -id), ~median(., na.rm = T)))
+```
+
+```{r}
+boardgames_clean %>% 
+  group_by(play_time_bins, max_players_bins) %>% 
+  summarise(across(c(where(is.double), -id), ~median(., na.rm = T))) %>% 
+  ungroup()
+```
+
+```{r}
+boardgames_clean %>% 
+  summarise(across(everything(), ~sum(is.na(.))))
+```
+
+# Let's Make Prettier Graphs
+
+```{r}
+boardgames_year <- 
+boardgames_clean %>% 
+  count(year_published)
+```
+
+```{r}
+boardgames_year %>% 
+  ggplot(aes(x= year_published,
+             y = n)) +
+  geom_line(color = "blue",
+            size = 1) +
+  coord_cartesian(xlim = c(1900, 2020)) +
+  scale_x_continuous(breaks = seq(1900, 2020, 10)) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(x = "Year Published",
+       y = "Count",
+       title = "Count of Board Games Published by Year",
+       subtitle = "via boardgamesgeek.com",
+       caption = "by Jessica Hirsch") +
+  theme_minimal() +
+  theme(axis.title = element_text(face = "bold",
+                                  size = 10))
 ```
 
